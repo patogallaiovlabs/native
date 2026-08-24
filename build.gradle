@@ -38,6 +38,13 @@ dependencies {
     jmhAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.22'
 }
 
+// JDK 9+ enables doclint by default and the existing javadoc has pre-existing
+// violations (e.g. NativeSecp256k1#558 @throws for an unthrown exception).
+// Keep javadoc generation non-fatal so the jar can be built on modern JDKs.
+tasks.withType(Javadoc) {
+    options.addStringOption('Xdoclint:none', '-quiet')
+}
+
 task sourcesJar(type: Jar, dependsOn: classes) {
     classifier = 'sources'
     from sourceSets.main.allSource
