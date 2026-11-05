@@ -25,6 +25,13 @@ public class Bench {
         System.arraycopy(h, 0, input, 0, 32); input[63] = 27; System.arraycopy(r, 0, input, 64, 32); System.arraycopy(r, 0, input, 96, 32);
         System.out.println("native context enabled: " + Secp256k1Context.isEnabled());
         Secp256k1Service nat = new Secp256k1ServiceNative();
+        if (a.length > 0 && a[0].equals("ecrecover")) {   // only the precompile, for build-variant comparisons
+            java.lang.reflect.Field f = Secp256k1.class.getDeclaredField("instance"); f.setAccessible(true); f.set(null, nat);
+            PrecompiledContracts.ECRecover ec = new PrecompiledContracts.ECRecover();
+            int runs = a.length > 1 ? Integer.parseInt(a[1]) : 1;
+            for (int i = 0; i < runs; i++) bench("PrecompiledContracts.ECRecover.execute (native)", () -> { try { return ec.execute(input); } catch (Exception e) { throw new RuntimeException(e); } });
+            return;
+        }
         Secp256k1Service bc = new Secp256k1ServiceBC();
         ECDSASignature sig = ECDSASignature.fromComponents(r, r, (byte) 27);
         bench("JNI NativeSecp256k1.ecdsaRecover (raw C + JNI)", () -> { try { return NativeSecp256k1.ecdsaRecover(sig64, h, 0, false); } catch (Exception e) { throw new RuntimeException(e); } });

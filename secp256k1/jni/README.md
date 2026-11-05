@@ -43,8 +43,50 @@ precomputed-table sources (`src/precomputed_ecmult.c`,
 x86_64) and Linux (gcc in Docker buildx, amd64 with `USE_ASM_X86_64`, arm64) and
 stages the binaries under `src/main/resources/org/bitcoin/native/`.
 
-Compile-time configuration is upstream's defaults: `ECMULT_WINDOW_SIZE=15`,
-`COMB_BLOCKS=11`/`COMB_TEETH=6`, modules `recovery` and `ecdh`, `-O3`.
+Compile-time configuration is upstream's defaults except
+`ECMULT_WINDOW_SIZE=20` (since native 1.6.0, see below): `COMB_BLOCKS=11`/
+`COMB_TEETH=6`, modules `recovery` and `ecdh`, `-O3`. The script takes
+`SECP_DEFS`, `SECP_CFLAGS`, `SECP_X86_ASM=0` and `SECP_RES` overrides for
+variant builds; a window above 15 regenerates `precomputed_ecmult.c` in the
+work copy with upstream's `precompute_ecmult`, the vendored tree stays untouched.
+
+## Build-time tuning (2026-11-05)
+
+Recovery is one variable-time `secp256k1_ecmult` (Strauss wNAF over the
+`ECMULT_WINDOW_SIZE` table of G multiples) plus two modular inverses, so the
+window size and the field-code flags were the candidates. Measured as
+`PrecompiledContracts.ECRecover.execute` with `tools/Bench.java ecrecover`
+(50k iterations after 20k warm-up, three JVM runs, median) against the rskj
+jar `fa5733f8`; arm64 Linux in an `eclipse-temurin:17-jdk` container on the
+same Mac, amd64 in the same image under emulation (its absolute numbers are
+indicative only, the ranking is what counts).
+
+| variant | Mac M4 Max arm64 | Linux arm64 | Linux amd64 (emulated) | binary size |
+|---|---|---|---|---|
+| `ECMULT_WINDOW_SIZE=15`, gcc defaults (1.5.0) | 12.36 µs | 12.49 µs | 19.34 µs | 1.2 MB |
+| `ECMULT_WINDOW_SIZE=18` | 12.50 µs | 12.50 µs | 19.15 µs | 8.6 MB |
+| **`ECMULT_WINDOW_SIZE=20` (1.6.0)** | **11.87 µs (−4.0%)** | **11.86 µs (−5.0%)** | **18.31 µs (−5.3%)** | 34 MB |
+| `ECMULT_WINDOW_SIZE=22` | does not build | does not build | not tried | (256 MB) |
+| w15 + `-march=x86-64-v3`, asm | | | 21.59 µs | |
+| w15 + `-march=x86-64-v3`, no asm | | | 20.36 µs | |
+| w15 + `-march=x86-64-v2`, asm | | | 19.43 µs | |
+| w15 + `-march=x86-64-v2`, no asm | | | 19.29 µs | |
+| w15, no `USE_ASM_X86_64` | | | 19.08 µs | |
+
+- The window is the only knob that moves the needle: w=20 saves about 0.5 µs
+  per `ecrecover`, roughly 3.7 ms per 25M-gas ecdsa block (7,350 calls).
+  w=18 is noise. The price is two 16 MB tables (32 MB per binary, four
+  binaries in the jar, 64 MB resident per JVM that loads it).
+- w=22 (308 MB of generated C) hits clang's source-location limit on macOS
+  and OOMs gcc inside the 31 GB Docker VM on Linux; it would be a 256 MB
+  binary anyway.
+- `-march=x86-64-v2`/`v3` and dropping the x86_64 scalar asm are all within
+  noise or worse under emulation (v3 is slower there because AVX2 is emulated
+  poorly), so amd64 keeps the baseline flags: generic x86-64 with
+  `USE_ASM_X86_64`. Re-measure the march variants on the real Boton CPUs
+  before concluding anything about them.
+- `tools/Conform.java` output (1,752 lines) is byte-identical for every
+  variant above on all three platforms, including the shipped w=20 binaries.
 
 ## What changed in the port
 
